@@ -44,5 +44,5 @@ The dataset is already downloaded on Snellius, and it's available at `/home/scur
 However, if you want to download the dataset yourself, you can use the `get_datasets.py` script available in the repository. Be aware this can take some time to download.
 ```bash
     conda install requests tqdm
-    python get_datasets.py JetClass -d data
+    python get_datasets.py JetClass -d data -f
 ```
