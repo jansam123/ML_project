@@ -37,9 +37,12 @@
     ```bash
     python -c "import torch; print(torch.cuda.is_available())"
     ``` 
+5. Every time you start a new terminal, make sure to activate the conda environment with `conda activate ml_project` before running any code.
+
 # Getting the dataset.
-The dataset is already downloaded on Snellius, and it's available at `FIX THIS`. 
+The dataset is already downloaded on Snellius, and it's available at `/home/scur0034/ML_project/data`. 
 However, if you want to download the dataset yourself, you can use the `get_datasets.py` script available in the repository. Be aware this can take some time to download.
 ```bash
+    conda install requests tqdm
     python get_datasets.py JetClass -d data
 ```
