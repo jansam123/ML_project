@@ -22,48 +22,44 @@ for i, key in enumerate(keys, 1):
     print(f"{i}. {key}")
 print("-" * 50)
 
-# Get the first available tree/object and explore it
-if keys:
-    first_key = keys[0]
-    print(f"\nExploring '{first_key}'...")
+first_key = 'tree'
+print(f"\nExploring '{first_key}'...")
+
+obj = root_file[first_key]
+print(f"Type: {type(obj)}")
     
-    obj = root_file[first_key]
-    print(f"Type: {type(obj)}")
-    
-    # If it's a tree, get its branches
-    if hasattr(obj, 'keys'):
-        branches = obj.keys()
-        print(f"\nAvailable branches:")
-        for i, branch in enumerate(branches, 1):
-            print(f"  {i}. {branch}")
-        
-        # Plot the first numerical branch
-        if branches:
-            first_branch = 'jet_pt'
-            print(f"\nLoading data from branch '{first_branch}'...")
-            
-            data = obj[first_branch].array(library="np")
-            
-            # Create a simple histogram plot
-            plt.figure(figsize=(10, 6))
-            plt.hist(data, bins=50, edgecolor='black', alpha=0.7)
-            plt.xlabel(first_branch)
-            plt.ylabel("Frequency")
-            plt.title(f"Histogram of {first_branch}")
-            plt.tight_layout()
-            
-            # Save and show the plot
-            output_path = "logs/plot_exploration.png"
-            plt.savefig(output_path, dpi=100)
-            print(f"✓ Plot saved to: {output_path}")
-            plt.show()
-            
-            # Print some basic statistics
-            print(f"\nBasic statistics for '{first_branch}':")
-            print(f"  Mean: {np.mean(data):.4f}")
-            print(f"  Std: {np.std(data):.4f}")
-            print(f"  Min: {np.min(data):.4f}")
-            print(f"  Max: {np.max(data):.4f}")
-            print(f"  Total entries: {len(data)}")
+
+branches = obj.keys()
+print(f"\nAvailable branches:")
+for i, branch in enumerate(branches, 1):
+    print(f"  {i}. {branch}")
+
+
+first_branch = 'jet_pt'
+print(f"\nLoading data from branch '{first_branch}'...")
+
+data = obj[first_branch].array(library="np")
+
+# Create a simple histogram plot
+plt.figure(figsize=(10, 6))
+plt.hist(data, bins=50, edgecolor='black', alpha=0.7)
+plt.xlabel(first_branch)
+plt.ylabel("Frequency")
+plt.title(f"Histogram of {first_branch}")
+plt.tight_layout()
+
+# Save and show the plot
+output_path = "logs/plot_exploration.png"
+plt.savefig(output_path, dpi=100)
+print(f"✓ Plot saved to: {output_path}")
+plt.show()
+
+# Print some basic statistics
+print(f"\nBasic statistics for '{first_branch}':")
+print(f"  Mean: {np.mean(data):.4f}")
+print(f"  Std: {np.std(data):.4f}")
+print(f"  Min: {np.min(data):.4f}")
+print(f"  Max: {np.max(data):.4f}")
+print(f"  Total entries: {len(data)}")
                 
 
