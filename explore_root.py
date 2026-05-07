@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """
 Script to load and explore a ROOT file using uproot.
+
+Run `conda install uproot matplotlib numpy`
 """
 
 import uproot
