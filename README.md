@@ -53,7 +53,7 @@ Snellius docs: https://servicedesk.surf.nl/wiki/spaces/WIKI/pages/74227835/Gener
 
 # Getting the dataset
 
-The dataset is already downloaded on Snellius, and it's available at **FIXME**.
+The dataset is already downloaded on Snellius, and it's available at `/home/scur0034/ML_project/data`.
 However, if you want to download the dataset yourself, you can use the `get_datasets.py` script available in the repository. Be aware this can take some time to download.
 ```bash
 conda install requests tqdm
