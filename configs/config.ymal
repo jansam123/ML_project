@@ -1,0 +1,22 @@
+data:
+  path: /home/scur0034/ML_project/data/JetClass/Pythia/train_100M
+  num_datasets: 4
+  batch_size: 32
+  num_workers: 0
+  split:
+    train: 0.7
+    val: 0.15
+    test: 0.15
+  preprocess:
+    normalize: true
+    resize: [128, 128]
+
+model:
+  type: "cnn"
+  hidden_dim: 256
+  dropout: 0.2
+
+training:
+  lr: 0.001
+  epochs: 22
+  optimizer: adam

@@ -11,26 +11,17 @@ from scs.data_loader import JetDataLoader
 from scs.utils import get_label_dict
 
 class DataModule(L.LightningDataModule):
-    def __init__(
-        self,
-        data_dir: str,
-        num_datasets: int | None = None,
-        batch_size: int = 32,
-        max_particles_in_jet: int = 128,
-        num_workers: int = 0,
-        train_fraction: float = 0.8,
-        val_fraction: float = 0.1,
-        seed: int =42,
-    ):
+    def __init__(self, config: dict):
         super().__init__()
-        self.data_dir = data_dir
-        self.num_datasets = num_datasets
-        self.batch_size = batch_size
-        self.max_particles_in_jet = max_particles_in_jet
-        self.num_workers = num_workers
-        self.train_fraction = train_fraction
-        self.val_fraction = val_fraction
-        self.seed = seed
+
+        self.data_dir = config["path"]
+        self.num_datasets = config.get("num_datasets", None)
+        self.batch_size = config.get("batch_size", 32)
+        self.max_particles_in_jet = config.get("max_particles_in_jet", 128)
+        self.num_workers = config.get("num_workers", 0)
+        self.train_fraction = config.get("train_fraction", 0.8)
+        self.val_fraction = config.get("val_fraction", 0.1)
+        self.seed = config.get("seed", 42)
 
     def setup(self, stage=None):
 
