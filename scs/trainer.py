@@ -58,12 +58,7 @@ class Trainer:
         return outputs
 
     def _extract_input(self, batch):
-        """
-        Assumes batch is either:
-        - tensor
-        - (x, y)
-        - dict with 'x'
-        """
+
         if isinstance(batch, torch.Tensor):
             return batch
 
