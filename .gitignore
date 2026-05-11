@@ -1,5 +1,4 @@
 data
-workbench.ipynb
-__pycache__/
-pipeline.ipynb
-notebooks
+__pycache__
+logs
+*.ipynb
