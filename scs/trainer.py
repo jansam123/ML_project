@@ -1,4 +1,5 @@
 import torch
+from tqdm import tqdm
 
 
 class Trainer:
@@ -10,8 +11,12 @@ class Trainer:
     def fit(self, model, train_loader, val_loader=None):
         model.to(self.device)
 
-        for epoch in range(self.config["epochs"]):
+        epochs = self.config["epochs"]
+
+        for epoch in range(epochs):
             self.epoch = epoch
+
+            print(f"\nEpoch [{epoch + 1}/{epochs}]")
 
             self._train_epoch(model, train_loader)
 
@@ -20,18 +25,20 @@ class Trainer:
 
     def _train_epoch(self, model, loader):
 
-        # NOTE: This is currently a forward-pass-only skeleton.
-        # No loss computation, backpropagation, or optimizer step is performed here.
-        # Intended for pipeline validation (data/model wiring), not training.
-        # To enable learning, this loop must be extended with:
-        # - loss function
-        # - backward pass (loss.backward())
-        # - optimizer step (optimizer.step())
+        # NOTE: Forward-pass-only skeleton.
+        # No loss / backward / optimizer step yet.
 
         model.train()
-        for batch in loader:
-            
-            x = self._extract_input(batch)
+
+        progress_bar = tqdm(
+            loader,
+            desc="Training",
+            leave=False
+        )
+
+        for batch in progress_bar:
+
+            x = self._extract_input(batch).to(self.device)
 
             with torch.no_grad():
                 _ = model(x)
@@ -39,9 +46,15 @@ class Trainer:
     def _validate_epoch(self, model, loader):
         model.eval()
 
+        progress_bar = tqdm(
+            loader,
+            desc="Validation",
+            leave=False
+        )
+
         with torch.no_grad():
-            for batch in loader:
-                x = self._extract_input(batch)
+            for batch in progress_bar:
+                x = self._extract_input(batch).to(self.device)
                 _ = model(x)
 
     def test(self, model, test_loader):
@@ -49,9 +62,14 @@ class Trainer:
 
         outputs = []
 
+        progress_bar = tqdm(
+            test_loader,
+            desc="Testing"
+        )
+
         with torch.no_grad():
-            for batch in test_loader:
-                x = self._extract_input(batch)
+            for batch in progress_bar:
+                x = self._extract_input(batch).to(self.device)
                 out = model(x)
                 outputs.append(out)
 

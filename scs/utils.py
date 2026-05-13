@@ -6,3 +6,4 @@ def get_label_dict(files):
         for file in files
     })
     return {cls: i for i, cls in enumerate(classes)}
+

@@ -18,5 +18,5 @@ model:
 
 training:
   lr: 0.001
-  epochs: 22
+  epochs: 3
   optimizer: adam

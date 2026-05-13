@@ -104,19 +104,18 @@ class JetDataLoader:
             dtype=np.float32
         )
 
-        x_padding[:number_of_particles_used] = \
-            x[:number_of_particles_used]
+        x_padding[:number_of_particles_used] = x[:number_of_particles_used]
 
         mask[:number_of_particles_used] = 1.0
 
         y = self._label_from_file(file)
 
         return {
-            "x": torch.tensor(x_padding, dtype=torch.float32),
-            "mask": torch.tensor(mask, dtype=torch.float32),
-            "jet_features": torch.tensor(
+            "x": torch.tensor(x_padding, dtype=torch.float32),      # (batch_size, max_particles_in_jet, num_constituent_features)
+            "mask": torch.tensor(mask, dtype=torch.float32),        # (batch_size, max_particles_in_jet)
+            "jet_features": torch.tensor(                           # (batch_size, num_jet_features)
                 jet_features,
                 dtype=torch.float32
             ),
-            "y": torch.tensor(y, dtype=torch.long),
+            "y": torch.tensor(y, dtype=torch.long),                 # (batch_size)
         }

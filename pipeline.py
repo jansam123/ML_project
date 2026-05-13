@@ -4,7 +4,7 @@ from scs.trainer import Trainer
 
 
 class Pipeline:
-    def __init__(self, config):
+    def __init__(self, config: dict):
         self.config = config
         self.data_module = DataModule(config["data"])
         self.model = Model(config["model"])
