@@ -1,7 +1,7 @@
 import lightning as L
 
 from scs.data_module import DataModule
-from scs.model import Model
+from scs.model import *
 from scs.trainer import Trainer
 
 
@@ -14,10 +14,13 @@ class Pipeline:
         self.lightning_model = None
 
         self.pl_trainer = L.Trainer(
+            max_steps=50_000,
             max_epochs=config["training"]["epochs"],
             accelerator="auto",
             devices="auto",
             precision="16-mixed",
+            log_every_n_steps=10,
+            enable_progress_bar=True,
         )
 
     def run(self):
@@ -26,7 +29,17 @@ class Pipeline:
         model_config = dict(self.config["model"])
         model_config["num_classes"] = self.data_module.num_classes
 
-        self.model = Model(model_config)
+        match model_config["name"]:
+            case "JetOnlyModel":
+                self.model = JetOnlyModel(model_config)
+            case "ParticleOnlyModel":
+                self.model = ParticleOnlyModel(model_config)
+            case "HybridModel":
+                self.model = HybridModel(model_config)
+            case "ParticleTransformer":
+                self.model = ParticleTransformer(model_config)
+
+
         self.lightning_model = Trainer(self.model, self.config["training"])
 
         self.pl_trainer.fit(

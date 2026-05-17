@@ -1,11 +1,11 @@
 import os
-from typing import Dict, List, Tuple
+from typing import Dict, List
 
 import awkward as ak
 import numpy as np
 import torch
 import uproot
-from torch.utils.data import Dataset
+from torch.utils.data import IterableDataset, get_worker_info
 
 from scs.utils import get_label_dict
 
@@ -32,54 +32,67 @@ branches = [
             "jet_tau4",
         ]
 
-class JetDataLoader(Dataset):
-    def __init__(self, files: list, max_particles_in_jet: int = 128):
+
+class JetDataLoader(IterableDataset):
+    """
+    File-level streaming dataset.
+
+    - No global event index.
+    - Files are split across workers.
+    - Each worker opens a file with a context manager, reads chunks, then closes it.
+    - Each file contributes at most `samples_per_file` samples per epoch.
+    """
+
+    def __init__(
+        self,
+        files: list,
+        max_particles_in_jet: int = 128,
+        chunk_size: int = 2048,
+        samples_per_file: int = 512,
+        label_map: dict | None = None,
+        shuffle_files: bool = True,
+        seed: int = 42,
+    ):
         super().__init__()
 
         self.files = list(files)
         self.max_particles_in_jet = max_particles_in_jet
-        self.label_map = get_label_dict(self.files)
+        self.chunk_size = max(1, int(chunk_size))
+        self.samples_per_file = max(1, int(samples_per_file))
+        self.shuffle_files = shuffle_files
+        self.seed = seed
+
+        self.label_map = label_map if label_map is not None else get_label_dict(self.files)
         self.num_classes = len(self.label_map)
+
         self.branches = branches
-
-        # per-worker cache (safe with multiprocessing)
-        self._trees: Dict[str, object] = {}
-
-
-        # build index WITHOUT keeping ROOT handles open
-        # This creates a dict that keeps track of how many entries each file has
-        # This lets __getitem__ quickly determine which file and event to load without rescanning ROOT files during training.
-        self.index: List[Tuple[str, int]] = []
+        # Metadata only: count entries per file once.
+        self.file_event_counts: Dict[str, int] = {}
         for f in self.files:
             with uproot.open(f) as fh:
-                n = fh["tree"].num_entries
-            self.index.extend((f, i) for i in range(n))
+                self.file_event_counts[f] = fh["tree"].num_entries
 
     def __len__(self):
-        return len(self.index)
+        return sum(
+            min(self.file_event_counts[f], self.samples_per_file)
+            for f in self.files
+        )
 
     def _label_from_file(self, file: str) -> int:
         name = os.path.basename(file)
         key = "_".join(name.split("_")[:-1])
-        return int(self.label_map[key])
 
-    def _get_tree(self, file: str):
-        # This method returns a tree object from a ROOT file
-        # It only opens the file the first time
-        if file not in self._trees:
-            self._trees[file] = uproot.open(file)["tree"]
-        return self._trees[file]
+        if key not in self.label_map:
+            raise KeyError(
+                f"Label key '{key}' not found. Available keys: {list(self.label_map.keys())}"
+            )
 
-    def _load_event(self, file: str, event_idx: int):
-        # This method loads exactly one event (jet) from one ROOT file
-        tree = self._get_tree(file)
-        arrays = tree.arrays(
-            self.branches,
-            entry_start=event_idx,
-            entry_stop=event_idx + 1,
-            library="ak",
-        )
-        return arrays[0]
+        y = int(self.label_map[key])
+        if not (0 <= y < self.num_classes):
+            raise ValueError(
+                f"Invalid label {y}. Must be in [0, {self.num_classes - 1}]"
+            )
+        return y
 
     @staticmethod
     def _to_numpy_1d(x):
@@ -126,22 +139,73 @@ class JetDataLoader(Dataset):
             dtype=np.float32,
         )
 
-    def __getitem__(self, idx):
-        file, event_idx = self.index[idx]
-
-        event = self._load_event(file, event_idx)
+    def _make_sample(self, file: str, event) -> dict:
         x = self._build_constituent_features(event)
         jet_features = self._build_jet_features(event)
+
         n = min(x.shape[0], self.max_particles_in_jet)
+
         x_pad = np.zeros((self.max_particles_in_jet, x.shape[1]), dtype=np.float32)
         mask = np.zeros(self.max_particles_in_jet, dtype=np.float32)
-        x_pad[:n] = x[:n]
-        mask[:n] = 1.0
+
+        if n > 0:
+            x_pad[:n] = x[:n]
+            mask[:n] = 1.0
+
         y = self._label_from_file(file)
 
         return {
-            "x": torch.tensor(x_pad),
-            "mask": torch.tensor(mask),
-            "jet_features": torch.tensor(jet_features),
+            "x": torch.from_numpy(x_pad),
+            "mask": torch.from_numpy(mask),
+            "jet_features": torch.from_numpy(jet_features),
             "y": torch.tensor(y, dtype=torch.long),
         }
+
+    def __iter__(self):
+        worker_info = get_worker_info()
+
+        if worker_info is None:
+            worker_id = 0
+            num_workers = 1
+            files = self.files
+        else:
+            worker_id = worker_info.id
+            num_workers = worker_info.num_workers
+            files = self.files[worker_id::num_workers]
+
+        rng = np.random.default_rng(self.seed + worker_id)
+
+        if self.shuffle_files:
+            files = list(files)
+            rng.shuffle(files)
+
+        for file in files:
+            n_events = self.file_event_counts[file]
+            n_take = min(n_events, self.samples_per_file)
+
+            if n_take <= 0:
+                continue
+
+            if n_events > n_take:
+                start0 = int(rng.integers(0, n_events - n_take + 1))
+            else:
+                start0 = 0
+
+            with uproot.open(file) as fh:
+                tree = fh["tree"]
+
+                stop0 = start0 + n_take
+                for start in range(start0, stop0, self.chunk_size):
+                    stop = min(start + self.chunk_size, stop0)
+
+                    arrays = tree.arrays(
+                        self.branches,
+                        entry_start=start,
+                        entry_stop=stop,
+                        library="ak",
+                    )
+
+                    n_chunk = len(arrays[self.branches[0]])
+                    for i in range(n_chunk):
+                        event = {k: arrays[k][i] for k in self.branches}
+                        yield self._make_sample(file, event)

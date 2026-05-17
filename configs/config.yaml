@@ -1,22 +1,24 @@
 data:
   path: /home/scur0034/ML_project/data/JetClass/Pythia/train_100M
-  num_datasets: 700
-  batch_size: 64
+  batch_size: 128
   num_workers: 8
+  max_particles_in_jet: 128
+  chunk_size: 2048
+  samples_per_file: 512
   split:
     train: 0.7
     val: 0.15
     test: 0.15
-  preprocess:
-    normalize: true
-    resize: [128, 128]
+  seed: 42
 
 model:
-  type: "model_type"
+  name: ParticleTransformer
+  particle_dim: 9
+  jet_feature_dim: 9
   hidden_dim: 256
-  dropout: 0.2
 
 training:
   lr: 0.001
-  epochs: 3
+  epochs: 100
   optimizer: adam
+  seed: 42

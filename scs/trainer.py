@@ -47,4 +47,3 @@ class Trainer(L.LightningModule):
     def configure_optimizers(self):
         lr = self.config.get("lr", 1e-3)
         return torch.optim.Adam(self.parameters(), lr=lr)
-
