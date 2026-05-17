@@ -38,10 +38,28 @@ class Trainer(L.LightningModule):
         self.log("val_acc", acc, prog_bar=True, on_epoch=True)
         return loss
 
+    def on_test_start(self):
+        self.test_probs = []
+        self.test_targets = []
+
     def test_step(self, batch, batch_idx):
-        loss, acc = self._shared_step(batch)
-        self.log("test_loss", loss, prog_bar=True, on_epoch=True)
-        self.log("test_acc", acc, prog_bar=True, on_epoch=True)
+        y = batch["y"]
+
+        logits = self(batch)
+
+        probs = torch.softmax(logits, dim=1)
+
+        self.test_probs.append(probs.detach().cpu())
+        self.test_targets.append(y.detach().cpu())
+
+        loss = self.loss_fn(logits, y)
+
+        preds = torch.argmax(logits, dim=1)
+        acc = (preds == y).float().mean()
+
+        self.log("test_loss", loss)
+        self.log("test_acc", acc)
+
         return loss
 
     def configure_optimizers(self):

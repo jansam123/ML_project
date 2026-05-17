@@ -4,7 +4,7 @@ data:
   num_workers: 8
   max_particles_in_jet: 128
   chunk_size: 2048
-  samples_per_file: 512
+  samples_per_file: 4096
   split:
     train: 0.7
     val: 0.15
@@ -19,6 +19,6 @@ model:
 
 training:
   lr: 0.001
-  epochs: 100
+  epochs: 10
   optimizer: adam
   seed: 42
