@@ -2,6 +2,10 @@ from pathlib import Path
 import yaml
 import sys
 
+import torch
+
+torch.set_float32_matmul_precision("high")
+
 
 sys.path.append(str(Path("..").resolve()))
 from pipeline import Pipeline
@@ -14,7 +18,6 @@ print(config_path.exists())
 with open(config_path, "r") as f:
     config = yaml.safe_load(f)
 
-config
-
+# config
 pipeline = Pipeline(config)
 outputs = pipeline.run()

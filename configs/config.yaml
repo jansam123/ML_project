@@ -1,8 +1,8 @@
 data:
   path: /home/scur0034/ML_project/data/JetClass/Pythia/train_100M
-  num_datasets: 4
-  batch_size: 32
-  num_workers: 0
+  num_datasets: 700
+  batch_size: 64
+  num_workers: 8
   split:
     train: 0.7
     val: 0.15
@@ -12,7 +12,7 @@ data:
     resize: [128, 128]
 
 model:
-  type: "cnn"
+  type: "model_type"
   hidden_dim: 256
   dropout: 0.2
 

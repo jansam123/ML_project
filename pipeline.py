@@ -1,34 +1,40 @@
+import lightning as L
+
 from scs.data_module import DataModule
 from scs.model import Model
 from scs.trainer import Trainer
 
 
 class Pipeline:
-    def __init__(self, config: dict):
+    def __init__(self, config):
         self.config = config
         self.data_module = DataModule(config["data"])
-        self.model = Model(config["model"])
-        self.trainer = Trainer(config["training"])
+
+        self.model = None
+        self.lightning_model = None
+
+        self.pl_trainer = L.Trainer(
+            max_epochs=config["training"]["epochs"],
+            accelerator="auto",
+            devices="auto",
+            precision="16-mixed",
+        )
 
     def run(self):
-        print("start set up")
         self.data_module.setup()
-        print("complete set up")
 
-        print("start train loader")
-        train_loader = self.data_module.train_dataloader()
-        print("end train loader")
+        model_config = dict(self.config["model"])
+        model_config["num_classes"] = self.data_module.num_classes
 
-        print("start val loader")
-        val_loader = self.data_module.val_dataloader()
-        print("end val loader")
+        self.model = Model(model_config)
+        self.lightning_model = Trainer(self.model, self.config["training"])
 
-        print("start train loader")
-        self.trainer.fit(self.model, train_loader, val_loader)
-        print("end train loader")
+        self.pl_trainer.fit(
+            self.lightning_model,
+            datamodule=self.data_module,
+        )
 
-        print("start test loader")
-        test_loader = self.data_module.test_dataloader()
-        print("end test loader")
-
-        return self.trainer.test(self.model, test_loader)
+        return self.pl_trainer.test(
+            self.lightning_model,
+            datamodule=self.data_module,
+        )
