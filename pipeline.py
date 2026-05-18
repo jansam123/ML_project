@@ -38,6 +38,8 @@ class Pipeline:
                 self.model = HybridModel(model_config)
             case "ParticleTransformer":
                 self.model = ParticleTransformer(model_config)
+            case "particle_mlp":
+                self.model = Model(model_config)
 
 
         self.lightning_model = Trainer(self.model, self.config["training"])

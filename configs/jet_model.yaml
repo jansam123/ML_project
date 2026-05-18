@@ -4,7 +4,7 @@ data:
   num_workers: 4
   max_particles_in_jet: 128
   chunk_size: 32768
-  samples_per_file: 4056
+  samples_per_file: 512
   split:
     train: 0.7
     val: 0.15
@@ -12,12 +12,9 @@ data:
   seed: 42
 
 model:
-  name: "particle_mlp"
-  num_particle_features: 9
-  num_jet_features: 9
-  num_classes: 4
-  hidden_dim: 256   #!!!!!!
-  dropout: 0.2
+  name: JetOnlyModel
+  jet_feature_dim: 9
+  hidden_dim: 128
 
 training:
   lr: 0.001
