@@ -1,5 +1,5 @@
 import os
-from typing import Dict, List
+from typing import Dict
 
 import awkward as ak
 import numpy as np
@@ -11,36 +11,38 @@ from scs.utils import get_label_dict
 
 
 branches = [
-            "part_px",
-            "part_py",
-            "part_deta",
-            "part_dphi",
-            "part_charge",
-            "part_isChargedHadron",
-            "part_isNeutralHadron",
-            "part_isPhoton",
-            "part_isElectron",
-            "part_isMuon",
-            "jet_pt",
-            "jet_eta",
-            "jet_phi",
-            "jet_energy",
-            "jet_sdmass",
-            "jet_tau1",
-            "jet_tau2",
-            "jet_tau3",
-            "jet_tau4",
-        ]
+    "part_px",
+    "part_py",
+    "part_deta",
+    "part_dphi",
+    "part_charge",
+    "part_isChargedHadron",
+    "part_isNeutralHadron",
+    "part_isPhoton",
+    "part_isElectron",
+    "part_isMuon",
+    "jet_pt",
+    "jet_eta",
+    "jet_phi",
+    "jet_energy",
+    "jet_sdmass",
+    "jet_tau1",
+    "jet_tau2",
+    "jet_tau3",
+    "jet_tau4",
+]
 
 
 class JetDataLoader(IterableDataset):
     """
-    File-level streaming dataset.
+    File-level streaming dataset with chunk-level preprocessing.
 
-    - No global event index.
-    - Files are split across workers.
-    - Each worker opens a file with a context manager, reads chunks, then closes it.
-    - Each file contributes at most `samples_per_file` samples per epoch.
+    Main speedup:
+    - read a whole chunk from ROOT
+    - convert/pad/stack the whole chunk at once
+    - yield per-event tensors from prebuilt NumPy arrays
+
+    This removes most of the per-event awkward -> NumPy conversion overhead.
     """
 
     def __init__(
@@ -56,7 +58,7 @@ class JetDataLoader(IterableDataset):
         super().__init__()
 
         self.files = list(files)
-        self.max_particles_in_jet = max_particles_in_jet
+        self.max_particles_in_jet = int(max_particles_in_jet)
         self.chunk_size = max(1, int(chunk_size))
         self.samples_per_file = max(1, int(samples_per_file))
         self.shuffle_files = shuffle_files
@@ -66,6 +68,7 @@ class JetDataLoader(IterableDataset):
         self.num_classes = len(self.label_map)
 
         self.branches = branches
+
         # Metadata only: count entries per file once.
         self.file_event_counts: Dict[str, int] = {}
         for f in self.files:
@@ -98,68 +101,89 @@ class JetDataLoader(IterableDataset):
     def _to_numpy_1d(x):
         return np.asarray(ak.to_numpy(x), dtype=np.float32)
 
-    @staticmethod
-    def _to_float(x):
-        v = np.asarray(ak.to_numpy(x))
-        return float(v.reshape(-1)[0])
+    def _pad_jagged(self, arr, fill_value=0.0):
+        """
+        Pad/clip a jagged awkward array to [n_events, max_particles_in_jet].
+        """
+        arr = ak.pad_none(arr, self.max_particles_in_jet, clip=True)
+        arr = ak.fill_none(arr, fill_value)
+        return ak.to_numpy(arr, allow_missing=False).astype(np.float32, copy=False)
 
-    def _build_constituent_features(self, event):
-        px = self._to_numpy_1d(event["part_px"])
-        py = self._to_numpy_1d(event["part_py"])
-        pt = np.sqrt(px**2 + py**2)
+    def _build_constituent_features_chunk(self, arrays):
+        """
+        Build:
+          x:    (B, Nmax, 9)
+          mask: (B, Nmax)
+        for an entire chunk at once.
+        """
+        px = arrays["part_px"]
+        py = arrays["part_py"]
+        pt = np.sqrt(px * px + py * py)
 
-        return np.stack(
-            [
-                pt,
-                self._to_numpy_1d(event["part_deta"]),
-                self._to_numpy_1d(event["part_dphi"]),
-                self._to_numpy_1d(event["part_charge"]),
-                self._to_numpy_1d(event["part_isChargedHadron"]),
-                self._to_numpy_1d(event["part_isNeutralHadron"]),
-                self._to_numpy_1d(event["part_isPhoton"]),
-                self._to_numpy_1d(event["part_isElectron"]),
-                self._to_numpy_1d(event["part_isMuon"]),
-            ],
-            axis=1,
+        feature_arrays = [
+            pt,
+            arrays["part_deta"],
+            arrays["part_dphi"],
+            arrays["part_charge"],
+            arrays["part_isChargedHadron"],
+            arrays["part_isNeutralHadron"],
+            arrays["part_isPhoton"],
+            arrays["part_isElectron"],
+            arrays["part_isMuon"],
+        ]
+
+        padded_features = [self._pad_jagged(a, fill_value=0.0) for a in feature_arrays]
+        x = np.stack(padded_features, axis=-1).astype(np.float32, copy=False)
+
+        counts = np.asarray(ak.to_numpy(ak.num(px, axis=1)), dtype=np.int64)
+        counts = np.minimum(counts, self.max_particles_in_jet)
+        mask = (
+            np.arange(self.max_particles_in_jet)[None, :] < counts[:, None]
         ).astype(np.float32)
 
-    def _build_jet_features(self, event):
-        return np.array(
+        return x, mask
+
+    def _build_jet_features_chunk(self, arrays):
+        """
+        Build:
+          jet_features: (B, 9)
+        for an entire chunk at once.
+        """
+        jet_features = np.stack(
             [
-                self._to_float(event["jet_pt"]),
-                self._to_float(event["jet_eta"]),
-                self._to_float(event["jet_phi"]),
-                self._to_float(event["jet_energy"]),
-                self._to_float(event["jet_sdmass"]),
-                self._to_float(event["jet_tau1"]),
-                self._to_float(event["jet_tau2"]),
-                self._to_float(event["jet_tau3"]),
-                self._to_float(event["jet_tau4"]),
+                self._to_numpy_1d(arrays["jet_pt"]),
+                self._to_numpy_1d(arrays["jet_eta"]),
+                self._to_numpy_1d(arrays["jet_phi"]),
+                self._to_numpy_1d(arrays["jet_energy"]),
+                self._to_numpy_1d(arrays["jet_sdmass"]),
+                self._to_numpy_1d(arrays["jet_tau1"]),
+                self._to_numpy_1d(arrays["jet_tau2"]),
+                self._to_numpy_1d(arrays["jet_tau3"]),
+                self._to_numpy_1d(arrays["jet_tau4"]),
             ],
-            dtype=np.float32,
-        )
+            axis=-1,
+        ).astype(np.float32, copy=False)
 
-    def _make_sample(self, file: str, event) -> dict:
-        x = self._build_constituent_features(event)
-        jet_features = self._build_jet_features(event)
+        return jet_features
 
-        n = min(x.shape[0], self.max_particles_in_jet)
+    def _yield_chunk_samples(self, file: str, arrays):
+        """
+        Convert one chunk into NumPy arrays once, then yield per-event samples.
+        """
+        x, mask = self._build_constituent_features_chunk(arrays)
+        jet_features = self._build_jet_features_chunk(arrays)
 
-        x_pad = np.zeros((self.max_particles_in_jet, x.shape[1]), dtype=np.float32)
-        mask = np.zeros(self.max_particles_in_jet, dtype=np.float32)
+        y_value = self._label_from_file(file)
+        y_tensor = torch.tensor(y_value, dtype=torch.long)
 
-        if n > 0:
-            x_pad[:n] = x[:n]
-            mask[:n] = 1.0
-
-        y = self._label_from_file(file)
-
-        return {
-            "x": torch.from_numpy(x_pad),
-            "mask": torch.from_numpy(mask),
-            "jet_features": torch.from_numpy(jet_features),
-            "y": torch.tensor(y, dtype=torch.long),
-        }
+        n_chunk = x.shape[0]
+        for i in range(n_chunk):
+            yield {
+                "x": torch.from_numpy(x[i]),
+                "mask": torch.from_numpy(mask[i]),
+                "jet_features": torch.from_numpy(jet_features[i]),
+                "y": y_tensor,
+            }
 
     def __iter__(self):
         worker_info = get_worker_info()
@@ -193,8 +217,8 @@ class JetDataLoader(IterableDataset):
 
             with uproot.open(file) as fh:
                 tree = fh["tree"]
-
                 stop0 = start0 + n_take
+
                 for start in range(start0, stop0, self.chunk_size):
                     stop = min(start + self.chunk_size, stop0)
 
@@ -205,7 +229,4 @@ class JetDataLoader(IterableDataset):
                         library="ak",
                     )
 
-                    n_chunk = len(arrays[self.branches[0]])
-                    for i in range(n_chunk):
-                        event = {k: arrays[k][i] for k in self.branches}
-                        yield self._make_sample(file, event)
+                    yield from self._yield_chunk_samples(file, arrays)
