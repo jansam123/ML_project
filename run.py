@@ -12,7 +12,7 @@ sys.path.append(str(Path("..").resolve()))
 from pipeline import Pipeline  # noqa: E402
 
 
-config_path = Path("configs/config.yaml")
+config_path = Path("configs/mixed_model.yaml")
 
 print(config_path.resolve())
 print(config_path.exists())

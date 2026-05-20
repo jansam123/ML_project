@@ -4,3 +4,4 @@ logs
 *.ipynb
 *.csv
 *.ckpt
+scs/particle_transformer.py
