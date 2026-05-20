@@ -1,89 +1,88 @@
 import torch
-from tqdm import tqdm
+import torch.nn as nn
+import lightning as L
 
+class Trainer(L.LightningModule):
+    def __init__(self, model, config):
+        super().__init__()
 
-class Trainer:
-    def __init__(self, config):
+        self.model = model
         self.config = config
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.epoch = 0
+        self.loss_fn = nn.CrossEntropyLoss()
 
-    def fit(self, model, train_loader, val_loader=None):
-        model.to(self.device)
-
-        epochs = self.config["epochs"]
-
-        for epoch in range(epochs):
-            self.epoch = epoch
-
-            print(f"\nEpoch [{epoch + 1}/{epochs}]")
-
-            self._train_epoch(model, train_loader)
-
-            if val_loader is not None:
-                self._validate_epoch(model, val_loader)
-
-    def _train_epoch(self, model, loader):
-
-        # NOTE: Forward-pass-only skeleton.
-        # No loss / backward / optimizer step yet.
-
-        model.train()
-
-        progress_bar = tqdm(
-            loader,
-            desc="Training",
-            leave=False
+    def forward(self, batch):
+        return self.model(
+            batch["x"],
+            batch["mask"],
+            batch["jet_features"],
         )
 
-        for batch in progress_bar:
+    def _shared_step(self, batch):
+        y = batch["y"]
+        logits = self(batch)
+        loss = self.loss_fn(logits, y)
+        preds = torch.argmax(logits, dim=1)
+        acc = (preds == y).float().mean()
+        return loss, acc
 
-            x = self._extract_input(batch).to(self.device)
+    def training_step(self, batch, batch_idx):
+        loss, acc = self._shared_step(batch)
+        self.log("train_loss", loss, prog_bar=True, on_step=True, on_epoch=True)
+        self.log("train_acc", acc, prog_bar=True, on_step=True, on_epoch=True)
+        return loss
 
-            with torch.no_grad():
-                _ = model(x)
+    def validation_step(self, batch, batch_idx):
+        loss, acc = self._shared_step(batch)
+        self.log("val_loss", loss, prog_bar=True, on_epoch=True)
+        self.log("val_acc", acc, prog_bar=True, on_epoch=True)
+        return loss
 
-    def _validate_epoch(self, model, loader):
-        model.eval()
+    def on_test_start(self):
+        self.test_probs = []
+        self.test_targets = []
 
-        progress_bar = tqdm(
-            loader,
-            desc="Validation",
-            leave=False
+    def test_step(self, batch, batch_idx):
+        y = batch["y"]
+
+        logits = self(batch)
+
+        probs = torch.softmax(logits, dim=1)
+
+        self.test_probs.append(probs.detach().cpu())
+        self.test_targets.append(y.detach().cpu())
+
+        loss = self.loss_fn(logits, y)
+
+        preds = torch.argmax(logits, dim=1)
+        acc = (preds == y).float().mean()
+
+        self.log("test_loss", loss)
+        self.log("test_acc", acc)
+
+        return loss
+
+    def configure_optimizers(self):
+        lr = self.config.get("lr", 1e-3)
+        weight_decay = self.config.get("weight_decay", 1e-4)
+        epochs = self.config.get("epochs", 100)
+
+        optimizer = torch.optim.AdamW(
+            self.parameters(),
+            lr=lr,
+            weight_decay=weight_decay,
         )
 
-        with torch.no_grad():
-            for batch in progress_bar:
-                x = self._extract_input(batch).to(self.device)
-                _ = model(x)
-
-    def test(self, model, test_loader):
-        model.eval()
-
-        outputs = []
-
-        progress_bar = tqdm(
-            test_loader,
-            desc="Testing"
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer,
+            T_max=epochs,
+            eta_min=1e-5,
         )
 
-        with torch.no_grad():
-            for batch in progress_bar:
-                x = self._extract_input(batch).to(self.device)
-                out = model(x)
-                outputs.append(out)
-
-        return outputs
-
-    def _extract_input(self, batch):
-
-        if isinstance(batch, torch.Tensor):
-            return batch
-
-        if isinstance(batch, (tuple, list)):
-            return batch[0]
-
-        if isinstance(batch, dict):
-            return batch.get("x", None)
-
-        raise ValueError("Unsupported batch format")
+        return {
+            "optimizer": optimizer,
+            "lr_scheduler": {
+                "scheduler": scheduler,
+                "interval": "epoch",
+                "frequency": 1,
+            },
+        }
