@@ -188,6 +188,7 @@ class JetDataLoader(IterableDataset):
     def __iter__(self):
         worker_info = get_worker_info()
 
+
         if worker_info is None:
             worker_id = 0
             num_workers = 1
