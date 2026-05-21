@@ -188,7 +188,6 @@ class JetDataLoader(IterableDataset):
     def __iter__(self):
         worker_info = get_worker_info()
 
-
         if worker_info is None:
             worker_id = 0
             num_workers = 1
@@ -203,6 +202,9 @@ class JetDataLoader(IterableDataset):
         if self.shuffle_files:
             files = list(files)
             rng.shuffle(files)
+
+        shuffle_buffer = []
+        buffer_size = 8192
 
         for file in files:
             n_events = self.file_event_counts[file]
@@ -230,4 +232,17 @@ class JetDataLoader(IterableDataset):
                         library="ak",
                     )
 
-                    yield from self._yield_chunk_samples(file, arrays)
+                    for sample in self._yield_chunk_samples(file, arrays):
+                        shuffle_buffer.append(sample)
+
+                        if len(shuffle_buffer) >= buffer_size:
+                            rng.shuffle(shuffle_buffer)
+
+                            while len(shuffle_buffer) > buffer_size // 2:
+                                yield shuffle_buffer.pop()
+
+        # flush remaining samples
+        rng.shuffle(shuffle_buffer)
+
+        while shuffle_buffer:
+            yield shuffle_buffer.pop()

@@ -43,7 +43,7 @@ model:
 training:
   lr: 0.001
   weight_decay: 0.0001
-  epochs: 5
+  epochs: 70
   seed: 42
 
   scheduler:
