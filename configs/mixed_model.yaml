@@ -1,0 +1,24 @@
+data:
+  path: /home/scur0034/ML_project/data/JetClass/Pythia/train_100M
+  batch_size: 512
+  num_workers: 8
+  max_particles_in_jet: 128
+  chunk_size: 32768
+  samples_per_file: 512
+  split:
+    train: 0.7
+    val: 0.15
+    test: 0.15
+  seed: 42
+
+model:
+  name: HybridModel
+  particle_dim: 9
+  jet_feature_dim: 9
+  hidden_dim: 128
+
+training:
+  lr: 0.001
+  epochs: 70
+  optimizer: adam
+  seed: 42

@@ -14,7 +14,7 @@ class Pipeline:
         self.lightning_model = None
 
         self.pl_trainer = L.Trainer(
-            max_steps=50_000,
+            # max_steps=50_000,
             max_epochs=config["training"]["epochs"],
             accelerator="auto",
             devices="auto",

@@ -2,7 +2,6 @@ import torch
 import torch.nn as nn
 import lightning as L
 
-
 class Trainer(L.LightningModule):
     def __init__(self, model, config):
         super().__init__()
@@ -64,4 +63,26 @@ class Trainer(L.LightningModule):
 
     def configure_optimizers(self):
         lr = self.config.get("lr", 1e-3)
-        return torch.optim.Adam(self.parameters(), lr=lr)
+        weight_decay = self.config.get("weight_decay", 1e-4)
+        epochs = self.config.get("epochs", 100)
+
+        optimizer = torch.optim.AdamW(
+            self.parameters(),
+            lr=lr,
+            weight_decay=weight_decay,
+        )
+
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer,
+            T_max=epochs,
+            eta_min=1e-5,
+        )
+
+        return {
+            "optimizer": optimizer,
+            "lr_scheduler": {
+                "scheduler": scheduler,
+                "interval": "epoch",
+                "frequency": 1,
+            },
+        }
