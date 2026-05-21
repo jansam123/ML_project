@@ -18,6 +18,6 @@ model:
 
 training:
   lr: 0.001
-  epochs: 5
+  epochs: 70
   optimizer: adam
   seed: 42
