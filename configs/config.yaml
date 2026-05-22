@@ -26,6 +26,6 @@ model:
 
 training:
   lr: 0.0003 #??? try to make is smaller (optimize it better)
-  epochs: 20  #the higher the better (or similar)
+  epochs: 5  #the higher the better (or similar)
   optimizer: adam
   seed: 42

@@ -5,7 +5,7 @@ data:
   num_workers: 8
   max_particles_in_jet: 128
   chunk_size: 32768
-  samples_per_file: 2028
+  samples_per_file: 512
 
   split:
     train: 0.7
@@ -31,7 +31,7 @@ model:
   dropout: 0.1
 
   # NEW: pooling choice (mean or max as requested)
-  pooling_type: mean
+  pooling_type: max
 
   # optional future scaling
   transformer_dim: 128
