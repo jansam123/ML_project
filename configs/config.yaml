@@ -12,20 +12,21 @@ data:
   seed: 42
 
 model:
-  name: "ParticleTransformer"
+  name: "particle_mlp"    #  "ParticleTransformer"
   num_particle_features: 9
   num_jet_features: 9
   num_classes: 10 #!!!!!!!!!!!!!!!!!
   hidden_dim: 256   #!!!!!!!!!!!!!!!!!!!!
-  dropout: 0.2
-  use_jet_features: false
+  dropout: 0.1
+  use_jet_features: false #!!!!!!!!!!!!
   use_transformer: true
-  num_heads: 4
+  num_heads: 8
   num_transformer_layers: 2
-  transformer_dim: 512
+  transformer_dim: 1024
+  pooling_type: mean
 
 training:
   lr: 0.0003 #??? try to make is smaller (optimize it better)
-  epochs: 5  #the higher the better (or similar)
+  epochs: 20  #the higher the better (or similar)
   optimizer: adam
   seed: 42

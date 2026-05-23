@@ -223,17 +223,59 @@ class ParticleTransformer(nn.Module):
         return logits
 
 
+
+
+
+
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
 
+def masked_mean_pool(x, mask):
+    """
+    x:    (B, N, H)
+    mask: (B, N), 1 = real particle, 0 = padding
+    """
+    mask = mask.unsqueeze(-1).to(x.dtype)
+    x = x * mask
+    summed = x.sum(dim=1)
+    denom = mask.sum(dim=1).clamp(min=1.0)
+    return summed / denom
+
+
+def masked_max_pool(x, mask):
+    """
+    x:    (B, N, H)
+    mask: (B, N), 1 = real particle, 0 = padding
+    """
+    mask_bool = mask.unsqueeze(-1).bool()
+    x = x.masked_fill(~mask_bool, float("-inf"))
+    pooled = x.max(dim=1).values
+
+    # Safety in case a jet has only padding.
+    pooled = torch.nan_to_num(pooled, neginf=0.0)
+    return pooled
+
+
+def pool_particles(x, mask, pooling_type="mean"):
+    if pooling_type == "max":
+        return masked_max_pool(x, mask)
+    elif pooling_type == "mean":
+        return masked_mean_pool(x, mask)
+    else:
+        raise ValueError(f"Unknown pooling_type: {pooling_type}")
+
+
 class Model(nn.Module):
     """
-        Inputs:
+    Improved particle-level Transformer model.
+
+    Inputs:
         x:
             Particle-level features.
-            Shape: (B, N, Fp)
+            Shape: (B, N, num_particle_features)
 
         mask:
             Particle mask.
@@ -243,13 +285,12 @@ class Model(nn.Module):
 
         jet_features:
             Optional global jet features.
-            Shape: (B, Fj)
+            Shape: (B, num_jet_features)
 
     Output:
         logits:
             Class scores.
             Shape: (B, num_classes)
-
     """
 
     def __init__(self, config: dict):
@@ -257,38 +298,43 @@ class Model(nn.Module):
 
         self.num_particle_features = config.get("num_particle_features", 9)
         self.num_jet_features = config.get("num_jet_features", 9)
-        self.num_classes = config.get("num_classes", 4)
+        self.num_classes = config.get("num_classes", 10)
+
         self.hidden_dim = config.get("hidden_dim", 256)
-        self.dropout = config.get("dropout", 0.2)
+        self.dropout = config.get("dropout", 0.1)
 
         self.use_jet_features = config.get("use_jet_features", False)
         self.use_transformer = config.get("use_transformer", True)
 
-        self.num_heads = config.get("num_heads", 4)
+        self.num_heads = config.get("num_heads", 8)
         self.num_transformer_layers = config.get("num_transformer_layers", 2)
-        self.transformer_dim = config.get("transformer_dim", 512)
 
-        # 1. Embed each particle independently.
-        #
-        # Input:
-        #     x has shape (B, N, num_particle_features)
-        #
-        # Output:
-        #     particle_embeddings has shape (B, N, hidden_dim)
+        # Important:
+        # If hidden_dim=256, a good default is 4 * hidden_dim = 1024.
+        self.transformer_dim = config.get("transformer_dim", self.hidden_dim * 4)
+
+        # mean or max
+        self.pooling_type = config.get("pooling_type", "mean")
+
+        # Optional final normalization after the Transformer.
+        self.final_norm = nn.LayerNorm(self.hidden_dim)
+
+        # 1. Particle embedding.
+        # Stronger than a single Linear layer, but still simple.
         self.particle_embedding = nn.Sequential(
             nn.Linear(self.num_particle_features, self.hidden_dim),
             nn.LayerNorm(self.hidden_dim),
             nn.GELU(),
             nn.Dropout(self.dropout),
+
             nn.Linear(self.hidden_dim, self.hidden_dim),
             nn.LayerNorm(self.hidden_dim),
             nn.GELU(),
+            nn.Dropout(self.dropout),
         )
 
-        # 2. Transformer block.
-        #
-        # particles interact with each other.
-        # The padding mask tells the Transformer which particles are fake padding.
+        # 2. Transformer encoder.
+        # norm_first=True is important: it usually makes Transformer training more stable.
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=self.hidden_dim,
             nhead=self.num_heads,
@@ -296,6 +342,7 @@ class Model(nn.Module):
             dropout=self.dropout,
             batch_first=True,
             activation="gelu",
+            norm_first=True,
         )
 
         self.transformer = nn.TransformerEncoder(
@@ -303,24 +350,23 @@ class Model(nn.Module):
             num_layers=self.num_transformer_layers,
         )
 
-        # This is useful if later we want to compare:
-        #     event_embedding from particles
-        # with:
-        #     jet_embedding from global jet features
+        # 3. Jet feature projection.
+        # Used only if use_jet_features=True.
         self.jet_projection = nn.Sequential(
             nn.Linear(self.num_jet_features, self.hidden_dim),
             nn.LayerNorm(self.hidden_dim),
             nn.GELU(),
+            nn.Dropout(self.dropout),
+
             nn.Linear(self.hidden_dim, self.hidden_dim),
+            nn.LayerNorm(self.hidden_dim),
+            nn.GELU(),
+            nn.Dropout(self.dropout),
         )
 
-        # If use_jet_features=False:
-        #     classifier input = event_embedding
-        #
-        # If use_jet_features=True:
-        #     classifier input = event_embedding + jet_embedding
+        # 4. Final classifier.
+        # Deeper than the previous one, more similar to ParticleTransformer.
         fusion_dim = self.hidden_dim
-
         if self.use_jet_features:
             fusion_dim += self.hidden_dim
 
@@ -329,13 +375,19 @@ class Model(nn.Module):
             nn.LayerNorm(self.hidden_dim),
             nn.GELU(),
             nn.Dropout(self.dropout),
+
+            nn.Linear(self.hidden_dim, self.hidden_dim),
+            nn.LayerNorm(self.hidden_dim),
+            nn.GELU(),
+            nn.Dropout(self.dropout),
+
             nn.Linear(self.hidden_dim, self.num_classes),
         )
 
     def forward(self, x, mask, jet_features=None, return_embeddings=False):
         """
         x:
-            Shape: (B, N, Fp)
+            Shape: (B, N, num_particle_features)
 
         mask:
             Shape: (B, N)
@@ -343,26 +395,24 @@ class Model(nn.Module):
             0 = padding
 
         jet_features:
-            Shape: (B, Fj), optional
+            Shape: (B, num_jet_features), optional
 
         return_embeddings:
             If False, returns only logits.
-            If True, returns logits plus embeddings useful for comparisons.
+            If True, returns logits plus useful embeddings.
         """
 
-        # Make sure mask is on the same device as x.
         mask = mask.to(x.device)
 
         if jet_features is not None:
             jet_features = jet_features.to(x.device)
 
-        # Embed each particle.
+        # Embed particles.
         particle_embeddings = self.particle_embedding(x)
-        # Shape: (B, N, hidden_dim)
 
-        # Transformer wants True for the positions that must be ignored.
+        # Transformer padding mask:
+        # True = ignore this particle.
         padding_mask = mask == 0
-        # Shape: (B, N)
 
         if self.use_transformer:
             particle_embeddings = self.transformer(
@@ -370,56 +420,48 @@ class Model(nn.Module):
                 src_key_padding_mask=padding_mask,
             )
 
-        # Remove padded particles before pooling.
-        mask_expanded = mask.unsqueeze(-1).to(particle_embeddings.dtype)
-        # Shape: (B, N, 1)
+        # Final normalization after Transformer.
+        particle_embeddings = self.final_norm(particle_embeddings)
 
-        particle_embeddings = particle_embeddings * mask_expanded
+        # Pool particles into one event-level embedding.
+        event_embedding = pool_particles(
+            particle_embeddings,
+            mask,
+            pooling_type=self.pooling_type,
+        )
 
-        # Pool all real particles into one event-level vector.
-        summed = particle_embeddings.sum(dim=1)
-        # Shape: (B, hidden_dim)
-
-        n_particles = mask_expanded.sum(dim=1).clamp(min=1.0)
-        # Shape: (B, 1)
-
-        event_embedding = summed / n_particles
-        # Shape: (B, hidden_dim)
-
-        # This is the input to the classifier.
         classifier_input = event_embedding
 
-        # Build jet embedding if jet_features are available.
+        # Optional jet feature branch.
         jet_embedding = None
 
-        if jet_features is not None:
-            jet_embedding = self.jet_projection(
-                jet_features.to(event_embedding.dtype)
-            )
-            # Shape: (B, hidden_dim)
-
-        # Optionally use jet features for classification.
         if self.use_jet_features:
-            if jet_embedding is None:
+            if jet_features is None:
                 raise ValueError(
                     "use_jet_features=True, but jet_features was not provided."
                 )
+
+            jet_embedding = self.jet_projection(
+                jet_features.to(event_embedding.dtype)
+            )
 
             classifier_input = torch.cat(
                 [event_embedding, jet_embedding],
                 dim=1,
             )
-            # Shape: (B, 2 * hidden_dim)
 
-        # Final class prediction.
+        elif jet_features is not None:
+            # We compute it only for analysis if return_embeddings=True.
+            if return_embeddings:
+                jet_embedding = self.jet_projection(
+                    jet_features.to(event_embedding.dtype)
+                )
+
         logits = self.classifier(classifier_input)
-        # Shape: (B, num_classes)
 
-        # The Trainer expects logits directly for CrossEntropyLoss.
         if not return_embeddings:
             return logits
 
-        #  output for future analysis/comparison.
         output = {
             "logits": logits,
             "event_embedding": event_embedding,
