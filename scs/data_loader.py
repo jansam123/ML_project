@@ -110,35 +110,67 @@ class JetDataLoader(IterableDataset):
         return ak.to_numpy(arr, allow_missing=False).astype(np.float32, copy=False)
 
     def _build_constituent_features_chunk(self, arrays):
-        """
-        Build:
-          x:    (B, Nmax, 9)
-          mask: (B, Nmax)
-        for an entire chunk at once.
-        """
         px = arrays["part_px"]
         py = arrays["part_py"]
+
         pt = np.sqrt(px * px + py * py)
+
+        # ---- kinematic features ----
+        pt = np.log(pt + 1e-3)
+
+        deta = arrays["part_deta"]
+        dphi = arrays["part_dphi"]
+
+        # ---- approximate normalization constants ----
+        # (good physics-informed priors; ideally replace with dataset stats later)
+        PT_SHIFT = 3.0      # typical log(pt) center
+        PT_SCALE = 1.5
+
+        ANG_SCALE = 0.3
+
+        # ---- continuous features ----
+        pt = (pt - PT_SHIFT) / PT_SCALE
+        deta = deta / ANG_SCALE
+        dphi = dphi / ANG_SCALE
+
+        # ---- binary / categorical features ----
+        # convert {0,1} → {-1,1} improves symmetry for MLP/Transformer
+        def center_binary(x):
+            return (x * 2.0) - 1.0
+
+        charge = center_binary(arrays["part_charge"])
+        chad = center_binary(arrays["part_isChargedHadron"])
+        nhad = center_binary(arrays["part_isNeutralHadron"])
+        photon = center_binary(arrays["part_isPhoton"])
+        electron = center_binary(arrays["part_isElectron"])
+        muon = center_binary(arrays["part_isMuon"])
 
         feature_arrays = [
             pt,
-            arrays["part_deta"],
-            arrays["part_dphi"],
-            arrays["part_charge"],
-            arrays["part_isChargedHadron"],
-            arrays["part_isNeutralHadron"],
-            arrays["part_isPhoton"],
-            arrays["part_isElectron"],
-            arrays["part_isMuon"],
+            deta,
+            dphi,
+            charge,
+            chad,
+            nhad,
+            photon,
+            electron,
+            muon,
         ]
 
-        padded_features = [self._pad_jagged(a, fill_value=0.0) for a in feature_arrays]
+        padded_features = [
+            self._pad_jagged(a, fill_value=0.0)
+            for a in feature_arrays
+        ]
+
         x = np.stack(padded_features, axis=-1).astype(np.float32, copy=False)
 
+        # ---- mask ----
         counts = np.asarray(ak.to_numpy(ak.num(px, axis=1)), dtype=np.int64)
         counts = np.minimum(counts, self.max_particles_in_jet)
+
         mask = (
-            np.arange(self.max_particles_in_jet)[None, :] < counts[:, None]
+            np.arange(self.max_particles_in_jet)[None, :]
+            < counts[:, None]
         ).astype(np.float32)
 
         return x, mask
@@ -149,13 +181,18 @@ class JetDataLoader(IterableDataset):
           jet_features: (B, 9)
         for an entire chunk at once.
         """
+
+        jet_pt = np.log(self._to_numpy_1d(arrays["jet_pt"]) + 1e-3)
+        jet_energy = np.log(self._to_numpy_1d(arrays["jet_energy"]) + 1e-3)
+        jet_sdmass = np.log(self._to_numpy_1d(arrays["jet_sdmass"]) + 1e-3)
+
         jet_features = np.stack(
             [
-                self._to_numpy_1d(arrays["jet_pt"]),
+                jet_pt,
                 self._to_numpy_1d(arrays["jet_eta"]),
                 self._to_numpy_1d(arrays["jet_phi"]),
-                self._to_numpy_1d(arrays["jet_energy"]),
-                self._to_numpy_1d(arrays["jet_sdmass"]),
+                jet_energy,
+                jet_sdmass,
                 self._to_numpy_1d(arrays["jet_tau1"]),
                 self._to_numpy_1d(arrays["jet_tau2"]),
                 self._to_numpy_1d(arrays["jet_tau3"]),
