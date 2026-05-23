@@ -1,26 +1,28 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 
 def masked_mean_pool(x, mask):
-    mask = mask.unsqueeze(-1).to(x.dtype)  # (B, N, 1)
+    mask = mask.to(dtype=x.dtype).unsqueeze(-1)
     x = x * mask
-    summed = x.sum(dim=1)
     denom = mask.sum(dim=1).clamp(min=1.0)
-    return summed / denom
+    return x.sum(dim=1) / denom
 
 
 def masked_max_pool(x, mask):
-    mask = mask.unsqueeze(-1).bool()
-    x = x.masked_fill(~mask, float("-inf"))
-    return x.max(dim=1).values
+    mask = mask.bool().unsqueeze(-1)
+    neg = torch.finfo(x.dtype).min
+    x = torch.where(mask, x, torch.full_like(x, neg))
+    return torch.max(x, dim=1).values
 
 
 def pool(x, mask, pooling_type="mean"):
     if pooling_type == "max":
         return masked_max_pool(x, mask)
-    return masked_mean_pool(x, mask)
+    elif pooling_type == "mean":
+        return masked_mean_pool(x, mask)
+    else:
+        raise ValueError(f"Unknown pooling type: {pooling_type}")
 
 
 class JetOnlyModel(nn.Module):
@@ -36,7 +38,6 @@ class JetOnlyModel(nn.Module):
             nn.Linear(jet_feature_dim, hidden_dim),
             nn.GELU(),
             nn.Dropout(dropout),
-
             nn.Linear(hidden_dim, hidden_dim),
             nn.GELU(),
             nn.Dropout(dropout),
@@ -46,11 +47,9 @@ class JetOnlyModel(nn.Module):
             nn.Linear(hidden_dim, hidden_dim),
             nn.GELU(),
             nn.Dropout(dropout),
-
             nn.Linear(hidden_dim, hidden_dim),
             nn.GELU(),
             nn.Dropout(dropout),
-
             nn.Linear(hidden_dim, num_classes),
         )
 
@@ -67,13 +66,13 @@ class ParticleOnlyModel(nn.Module):
         hidden_dim = config.get("hidden_dim", 128)
         num_classes = config.get("num_classes", 4)
         dropout = config.get("dropout", 0.1)
+
         self.pooling_type = config.get("pooling_type", "mean")
 
         self.particle_encoder = nn.Sequential(
             nn.Linear(particle_dim, hidden_dim),
             nn.GELU(),
             nn.Dropout(dropout),
-
             nn.Linear(hidden_dim, hidden_dim),
             nn.GELU(),
             nn.Dropout(dropout),
@@ -83,11 +82,9 @@ class ParticleOnlyModel(nn.Module):
             nn.Linear(hidden_dim, hidden_dim),
             nn.GELU(),
             nn.Dropout(dropout),
-
             nn.Linear(hidden_dim, hidden_dim),
             nn.GELU(),
             nn.Dropout(dropout),
-
             nn.Linear(hidden_dim, num_classes),
         )
 
@@ -106,13 +103,13 @@ class HybridModel(nn.Module):
         hidden_dim = config.get("hidden_dim", 128)
         num_classes = config.get("num_classes", 4)
         dropout = config.get("dropout", 0.1)
+
         self.pooling_type = config.get("pooling_type", "mean")
 
         self.particle_encoder = nn.Sequential(
             nn.Linear(particle_dim, hidden_dim),
             nn.GELU(),
             nn.Dropout(dropout),
-
             nn.Linear(hidden_dim, hidden_dim),
             nn.GELU(),
             nn.Dropout(dropout),
@@ -122,7 +119,6 @@ class HybridModel(nn.Module):
             nn.Linear(jet_feature_dim, hidden_dim),
             nn.GELU(),
             nn.Dropout(dropout),
-
             nn.Linear(hidden_dim, hidden_dim),
             nn.GELU(),
             nn.Dropout(dropout),
@@ -132,11 +128,9 @@ class HybridModel(nn.Module):
             nn.Linear(hidden_dim * 2, hidden_dim),
             nn.GELU(),
             nn.Dropout(dropout),
-
             nn.Linear(hidden_dim, hidden_dim),
             nn.GELU(),
             nn.Dropout(dropout),
-
             nn.Linear(hidden_dim, num_classes),
         )
 
@@ -146,8 +140,30 @@ class HybridModel(nn.Module):
 
         jet_h = self.jet_encoder(jet_features)
 
-        out = torch.cat([pooled, jet_h], dim=-1)
-        return self.classifier(out)
+        return self.classifier(torch.cat([pooled, jet_h], dim=-1))
+
+import torch
+import torch.nn as nn
+
+
+def masked_mean_pool(x, mask):
+    mask = mask.unsqueeze(-1).to(x.dtype)
+    x = x * mask
+    summed = x.sum(dim=1)
+    denom = mask.sum(dim=1).clamp(min=1.0)
+    return summed / denom
+
+
+def masked_max_pool(x, mask):
+    mask = mask.bool().unsqueeze(-1)
+    x = x.masked_fill(~mask, torch.finfo(x.dtype).min)
+    return x.max(dim=1).values
+
+
+def pool(x, mask, pooling_type="mean"):
+    if pooling_type == "max":
+        return masked_max_pool(x, mask)
+    return masked_mean_pool(x, mask)
 
 
 class ParticleTransformer(nn.Module):
@@ -155,12 +171,15 @@ class ParticleTransformer(nn.Module):
         super().__init__()
 
         particle_dim = config.get("particle_dim", 9)
+        jet_feature_dim = config.get("jet_feature_dim", 9)
         hidden_dim = config.get("hidden_dim", 128)
-        num_heads = config.get("num_heads", 4)
+        num_heads = config.get("num_heads", 8)
         num_layers = config.get("num_layers", 2)
         num_classes = config.get("num_classes", 4)
         dropout = config.get("dropout", 0.1)
-        self.pooling_type = config.get("pooling_type", "max")
+
+        self.pooling_type = config.get("pooling_type", "mean")
+        self.use_jet_features = config.get("use_jet_features", True)
 
         self.input_embed = nn.Sequential(
             nn.Linear(particle_dim, hidden_dim),
@@ -184,24 +203,47 @@ class ParticleTransformer(nn.Module):
             num_layers=num_layers,
         )
 
+        if self.use_jet_features:
+            self.jet_encoder = nn.Sequential(
+                nn.Linear(jet_feature_dim, hidden_dim),
+                nn.GELU(),
+                nn.Dropout(dropout),
+                nn.Linear(hidden_dim, hidden_dim),
+                nn.GELU(),
+                nn.Dropout(dropout),
+            )
+            classifier_in = hidden_dim * 2
+        else:
+            self.jet_encoder = None
+            classifier_in = hidden_dim
+
         self.classifier = nn.Sequential(
+            nn.Linear(classifier_in, hidden_dim),
+            nn.GELU(),
+            nn.Dropout(dropout),
             nn.Linear(hidden_dim, hidden_dim),
             nn.GELU(),
             nn.Dropout(dropout),
-
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.GELU(),
-            nn.Dropout(dropout),
-
             nn.Linear(hidden_dim, num_classes),
         )
 
     def forward(self, x, mask, jet_features=None):
+        valid_mask = mask.bool()
+
+        # Prevent fully-masked rows from causing attention issues.
+        empty_rows = ~valid_mask.any(dim=1)
+        if empty_rows.any():
+            valid_mask = valid_mask.clone()
+            valid_mask[empty_rows, 0] = True
+
+        x = x * valid_mask.unsqueeze(-1).to(x.dtype)
+
         h = self.input_embed(x)
+        h = self.encoder(h, src_key_padding_mask=~valid_mask)
 
-        padding_mask = (mask == 0)
-        h = self.encoder(h, src_key_padding_mask=padding_mask)
+        pooled = pool(h, valid_mask, self.pooling_type)
 
+<<<<<<< HEAD
         # 1. embed particles
         h = self.input_embed(x)  # (B, N, H)
 
@@ -478,3 +520,14 @@ class Model(nn.Module):
             output["jet_embedding_normalized"] = None
 
         return output
+=======
+        if self.use_jet_features:
+            if jet_features is None:
+                raise ValueError("jet_features is required when use_jet_features=True")
+            jet_h = self.jet_encoder(jet_features)
+            out = torch.cat([pooled, jet_h], dim=-1)
+        else:
+            out = pooled
+
+        return self.classifier(out)
+>>>>>>> origin/Lucas

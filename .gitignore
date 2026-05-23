@@ -6,3 +6,4 @@ logs
 scs/particle_transformer.py
 notebooks/pipeline.ipynb
 notebooks/workbench.ipynb
+notebooks/runs
