@@ -1,7 +1,9 @@
 data
 __pycache__
 logs
-*.ipynb
 *.csv
 *.ckpt
 scs/particle_transformer.py
+notebooks/pipeline.ipynb
+notebooks/workbench.ipynb
+notebooks/runs

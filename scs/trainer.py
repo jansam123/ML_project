@@ -1,6 +1,7 @@
+import lightning as L
 import torch
 import torch.nn as nn
-import lightning as L
+
 
 class Trainer(L.LightningModule):
     def __init__(self, model, config):
@@ -23,18 +24,49 @@ class Trainer(L.LightningModule):
         loss = self.loss_fn(logits, y)
         preds = torch.argmax(logits, dim=1)
         acc = (preds == y).float().mean()
-        return loss, acc
+        return loss, acc, y
 
     def training_step(self, batch, batch_idx):
-        loss, acc = self._shared_step(batch)
-        self.log("train_loss", loss, prog_bar=True, on_step=True, on_epoch=True)
-        self.log("train_acc", acc, prog_bar=True, on_step=True, on_epoch=True)
+        loss, acc, y = self._shared_step(batch)
+
+        self.log(
+            "train_loss",
+            loss,
+            prog_bar=True,
+            on_step=True,
+            on_epoch=True,
+        )
+
+        self.log(
+            "train_acc",
+            acc,
+            prog_bar=True,
+            on_step=True,
+            on_epoch=True,
+            batch_size=y.size(0),
+        )
+
         return loss
 
     def validation_step(self, batch, batch_idx):
-        loss, acc = self._shared_step(batch)
-        self.log("val_loss", loss, prog_bar=True, on_epoch=True)
-        self.log("val_acc", acc, prog_bar=True, on_epoch=True)
+        loss, acc, y = self._shared_step(batch)
+
+        self.log(
+            "val_loss",
+            loss,
+            prog_bar=True,
+            on_epoch=True,
+            batch_size=y.size(0),
+        )
+
+        self.log(
+            "val_acc",
+            acc,
+            prog_bar=True,
+            on_epoch=True,
+            batch_size=y.size(0),
+        )
+
         return loss
 
     def on_test_start(self):
@@ -42,22 +74,27 @@ class Trainer(L.LightningModule):
         self.test_targets = []
 
     def test_step(self, batch, batch_idx):
-        y = batch["y"]
+        loss, acc, y = self._shared_step(batch)
 
         logits = self(batch)
-
         probs = torch.softmax(logits, dim=1)
 
         self.test_probs.append(probs.detach().cpu())
         self.test_targets.append(y.detach().cpu())
 
-        loss = self.loss_fn(logits, y)
+        self.log(
+            "test_loss",
+            loss,
+            on_epoch=True,
+            batch_size=y.size(0),
+        )
 
-        preds = torch.argmax(logits, dim=1)
-        acc = (preds == y).float().mean()
-
-        self.log("test_loss", loss)
-        self.log("test_acc", acc)
+        self.log(
+            "test_acc",
+            acc,
+            on_epoch=True,
+            batch_size=y.size(0), 
+        )
 
         return loss
 

@@ -1,6 +1,28 @@
 import torch
 import torch.nn as nn
-# from particle_transformer import *
+
+
+def masked_mean_pool(x, mask):
+    mask = mask.to(dtype=x.dtype).unsqueeze(-1)
+    x = x * mask
+    denom = mask.sum(dim=1).clamp(min=1.0)
+    return x.sum(dim=1) / denom
+
+
+def masked_max_pool(x, mask):
+    mask = mask.bool().unsqueeze(-1)
+    neg = torch.finfo(x.dtype).min
+    x = torch.where(mask, x, torch.full_like(x, neg))
+    return torch.max(x, dim=1).values
+
+
+def pool(x, mask, pooling_type="mean"):
+    if pooling_type == "max":
+        return masked_max_pool(x, mask)
+    elif pooling_type == "mean":
+        return masked_mean_pool(x, mask)
+    else:
+        raise ValueError(f"Unknown pooling type: {pooling_type}")
 
 
 class JetOnlyModel(nn.Module):
@@ -10,25 +32,30 @@ class JetOnlyModel(nn.Module):
         jet_feature_dim = config.get("jet_feature_dim", 9)
         hidden_dim = config.get("hidden_dim", 128)
         num_classes = config.get("num_classes", 4)
+        dropout = config.get("dropout", 0.1)
 
         self.jet_encoder = nn.Sequential(
             nn.Linear(jet_feature_dim, hidden_dim),
-            nn.ReLU(),
+            nn.GELU(),
+            nn.Dropout(dropout),
             nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(),
+            nn.GELU(),
+            nn.Dropout(dropout),
         )
 
         self.classifier = nn.Sequential(
             nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.GELU(),
+            nn.Dropout(dropout),
             nn.Linear(hidden_dim, num_classes),
         )
 
     def forward(self, x, mask, jet_features):
         jet_h = self.jet_encoder(jet_features)
-        logits = self.classifier(jet_h)
-        return logits
-
+        return self.classifier(jet_h)
 
 
 class ParticleOnlyModel(nn.Module):
@@ -38,30 +65,34 @@ class ParticleOnlyModel(nn.Module):
         particle_dim = config.get("particle_dim", 9)
         hidden_dim = config.get("hidden_dim", 128)
         num_classes = config.get("num_classes", 4)
+        dropout = config.get("dropout", 0.1)
+
+        self.pooling_type = config.get("pooling_type", "mean")
 
         self.particle_encoder = nn.Sequential(
             nn.Linear(particle_dim, hidden_dim),
-            nn.ReLU(),
+            nn.GELU(),
+            nn.Dropout(dropout),
             nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(),
+            nn.GELU(),
+            nn.Dropout(dropout),
         )
 
         self.classifier = nn.Sequential(
             nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.GELU(),
+            nn.Dropout(dropout),
             nn.Linear(hidden_dim, num_classes),
         )
 
-    def forward(self, x, mask, jet_features):
-        h = self.particle_encoder(x)  # (B, N, H)
+    def forward(self, x, mask, jet_features=None):
+        h = self.particle_encoder(x)
+        pooled = pool(h, mask, self.pooling_type)
+        return self.classifier(pooled)
 
-        mask_ = mask.unsqueeze(-1).to(dtype=h.dtype)
-        h = h * mask_
-
-        pooled = h.sum(dim=1) / mask_.sum(dim=1).clamp(min=1.0)
-
-        logits = self.classifier(pooled)
-        return logits
 
 class HybridModel(nn.Module):
     def __init__(self, config):
@@ -71,108 +102,92 @@ class HybridModel(nn.Module):
         jet_feature_dim = config.get("jet_feature_dim", 9)
         hidden_dim = config.get("hidden_dim", 128)
         num_classes = config.get("num_classes", 4)
+        dropout = config.get("dropout", 0.1)
+
+        self.pooling_type = config.get("pooling_type", "mean")
 
         self.particle_encoder = nn.Sequential(
             nn.Linear(particle_dim, hidden_dim),
-            nn.ReLU(),
+            nn.GELU(),
+            nn.Dropout(dropout),
             nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(),
+            nn.GELU(),
+            nn.Dropout(dropout),
         )
 
         self.jet_encoder = nn.Sequential(
             nn.Linear(jet_feature_dim, hidden_dim),
-            nn.ReLU(),
+            nn.GELU(),
+            nn.Dropout(dropout),
             nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(),
+            nn.GELU(),
+            nn.Dropout(dropout),
         )
 
         self.classifier = nn.Sequential(
             nn.Linear(hidden_dim * 2, hidden_dim),
-            nn.ReLU(),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.GELU(),
+            nn.Dropout(dropout),
             nn.Linear(hidden_dim, num_classes),
         )
 
     def forward(self, x, mask, jet_features):
         h = self.particle_encoder(x)
-
-        mask_ = mask.unsqueeze(-1).to(dtype=h.dtype)
-        h = h * mask_
-
-        pooled = h.sum(dim=1) / mask_.sum(dim=1).clamp(min=1.0)
+        pooled = pool(h, mask, self.pooling_type)
 
         jet_h = self.jet_encoder(jet_features)
 
-        out = torch.cat([pooled, jet_h], dim=-1)
-        logits = self.classifier(out)
+        return self.classifier(torch.cat([pooled, jet_h], dim=-1))
 
-        return logits
+import torch
+import torch.nn as nn
 
 
-class ParticleTransformer(nn.Module):
-    def __init__(self, config):
-        super().__init__()
+def masked_mean_pool(x, mask):
+    mask = mask.unsqueeze(-1).to(x.dtype)
+    x = x * mask
+    summed = x.sum(dim=1)
+    denom = mask.sum(dim=1).clamp(min=1.0)
+    return summed / denom
 
-        particle_dim = config.get("particle_dim", 9)
-        hidden_dim = config.get("hidden_dim", 128)
-        num_heads = config.get("num_heads", 4)
-        num_layers = config.get("num_layers", 2)
-        num_classes = config.get("num_classes", 4)
-        dropout = config.get("dropout", 0.1)
 
-        self.input_embed = nn.Sequential(
-            nn.Linear(particle_dim, hidden_dim),
-            nn.LayerNorm(hidden_dim),
-            nn.GELU(),
-        )
+def masked_max_pool(x, mask):
+    mask = mask.bool().unsqueeze(-1)
+    x = x.masked_fill(~mask, torch.finfo(x.dtype).min)
+    return x.max(dim=1).values
 
-        self.encoder = TransformerEncoder(
-            num_layers=num_layers,
-            d_model=hidden_dim,
-            num_heads=num_heads,
-            mlp_ratio=4,
-            dropout=dropout,
-        )
 
-        self.classifier = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.GELU(),
-            nn.Linear(hidden_dim, num_classes),
-        )
+def pool(x, mask, pooling_type="mean"):
+    if pooling_type == "max":
+        return masked_max_pool(x, mask)
+    return masked_mean_pool(x, mask)
 
-    def forward(self, x, mask, jet_features=None):
-        h = self.input_embed(x)
-
-        # True = ignore (PyTorch convention)
-        key_padding_mask = (mask == 0)
-
-        h = self.encoder(h, key_padding_mask=key_padding_mask)
-
-        mask_ = mask.unsqueeze(-1).to(h.dtype)
-        h = h * mask_
-
-        pooled = h.sum(dim=1) / mask_.sum(dim=1).clamp(min=1.0)
-
-        return self.classifier(pooled)
 
 class ParticleTransformer(nn.Module):
     def __init__(self, config):
         super().__init__()
 
         particle_dim = config.get("particle_dim", 9)
+        jet_feature_dim = config.get("jet_feature_dim", 9)
         hidden_dim = config.get("hidden_dim", 128)
-        num_heads = config.get("num_heads", 4)
+        num_heads = config.get("num_heads", 8)
         num_layers = config.get("num_layers", 2)
         num_classes = config.get("num_classes", 4)
         dropout = config.get("dropout", 0.1)
 
-        # --- input embedding ---
+        self.pooling_type = config.get("pooling_type", "mean")
+        self.use_jet_features = config.get("use_jet_features", True)
+
         self.input_embed = nn.Sequential(
             nn.Linear(particle_dim, hidden_dim),
             nn.LayerNorm(hidden_dim),
             nn.GELU(),
+            nn.Dropout(dropout),
         )
 
-        # --- transformer encoder ---
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=hidden_dim,
             nhead=num_heads,
@@ -188,39 +203,52 @@ class ParticleTransformer(nn.Module):
             num_layers=num_layers,
         )
 
-        # --- classifier ---
+        if self.use_jet_features:
+            self.jet_encoder = nn.Sequential(
+                nn.Linear(jet_feature_dim, hidden_dim),
+                nn.GELU(),
+                nn.Dropout(dropout),
+                nn.Linear(hidden_dim, hidden_dim),
+                nn.GELU(),
+                nn.Dropout(dropout),
+            )
+            classifier_in = hidden_dim * 2
+        else:
+            self.jet_encoder = None
+            classifier_in = hidden_dim
+
         self.classifier = nn.Sequential(
+            nn.Linear(classifier_in, hidden_dim),
+            nn.GELU(),
+            nn.Dropout(dropout),
             nn.Linear(hidden_dim, hidden_dim),
             nn.GELU(),
+            nn.Dropout(dropout),
             nn.Linear(hidden_dim, num_classes),
         )
 
-    def forward(self, x, mask, jet_features):
-        """
-        x: (B, N, F)
-        mask: (B, N)
-        """
+    def forward(self, x, mask, jet_features=None):
+        valid_mask = mask.bool()
 
-        B, N, _ = x.shape
+        # Prevent fully-masked rows from causing attention issues.
+        empty_rows = ~valid_mask.any(dim=1)
+        if empty_rows.any():
+            valid_mask = valid_mask.clone()
+            valid_mask[empty_rows, 0] = True
 
-        # 1. embed particles
-        h = self.input_embed(x)  # (B, N, H)
+        x = x * valid_mask.unsqueeze(-1).to(x.dtype)
 
-        # 2. build attention mask (True = ignore)
-        attn_mask = (mask == 0)  # (B, N)
+        h = self.input_embed(x)
+        h = self.encoder(h, src_key_padding_mask=~valid_mask)
 
-        # PyTorch expects: (B, N) bool mask
-        h = self.encoder(h, src_key_padding_mask=attn_mask)
+        pooled = pool(h, valid_mask, self.pooling_type)
 
-        # 3. masked mean pooling
-        mask_ = mask.unsqueeze(-1).to(h.dtype)
-        h = h * mask_
+        if self.use_jet_features:
+            if jet_features is None:
+                raise ValueError("jet_features is required when use_jet_features=True")
+            jet_h = self.jet_encoder(jet_features)
+            out = torch.cat([pooled, jet_h], dim=-1)
+        else:
+            out = pooled
 
-        pooled = h.sum(dim=1) / mask_.sum(dim=1).clamp(min=1.0)
-
-        # 4. classification
-        logits = self.classifier(pooled)
-
-        return logits
-
-
+        return self.classifier(out)

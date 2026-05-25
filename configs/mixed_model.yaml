@@ -1,7 +1,7 @@
 data:
   path: /home/scur0034/ML_project/data/JetClass/Pythia/train_100M
   batch_size: 512
-  num_workers: 4
+  num_workers: 8
   max_particles_in_jet: 128
   chunk_size: 32768
   samples_per_file: 512
@@ -19,6 +19,6 @@ model:
 
 training:
   lr: 0.001
-  epochs: 70
+  epochs: 100
   optimizer: adam
   seed: 42

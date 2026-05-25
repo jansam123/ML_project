@@ -1,10 +1,10 @@
 data:
   path: /home/scur0034/ML_project/data/JetClass/Pythia/train_100M
   batch_size: 512
-  num_workers: 4
+  num_workers: 8
   max_particles_in_jet: 128
   chunk_size: 32768
-  samples_per_file: 512
+  samples_per_file: 612  #512 quick, higher the better !!!!!
   split:
     train: 0.7
     val: 0.15
@@ -12,25 +12,20 @@ data:
   seed: 42
 
 model:
-  name: "particle_transformer"
+  name: "ParticleTransformer"
   num_particle_features: 9
   num_jet_features: 9
-  num_classes: 4
-  hidden_dim: 256
+  num_classes: 10 #!!!!!!!!!!!!!!!!!
+  hidden_dim: 256   #!!!!!!!!!!!!!!!!!!!!
   dropout: 0.2
-
   use_jet_features: false
   use_transformer: true
-
   num_heads: 4
   num_transformer_layers: 2
-  transformer_dim: 512
-
-
-
+  transformer_dim: 128
 
 training:
-  lr: 0.001
-  epochs: 70
+  lr: 0.0003 #??? try to make is smaller (optimize it better)
+  epochs: 5  #the higher the better (or similar)
   optimizer: adam
   seed: 42

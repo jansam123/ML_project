@@ -2,12 +2,10 @@ data:
   path: /home/scur0034/ML_project/data/JetClass/Pythia/train_100M
 
   batch_size: 512
-  num_workers: 4
-
+  num_workers: 8
   max_particles_in_jet: 128
-
   chunk_size: 32768
-  samples_per_file: 4056
+  samples_per_file: 8192
 
   split:
     train: 0.7
@@ -20,16 +18,32 @@ data:
 model:
   name: ParticleTransformer
 
+  # input dims
   particle_dim: 9
   jet_feature_dim: 9
 
-  hidden_dim: 256
+  # core architecture
+  hidden_dim: 128
+  num_heads: 8
+  num_layers: 4
+
+  # regularization (reviewer requested dropout)
+  dropout: 0.1
+
+  # pooling choice (mean or max as requested)
+  pooling_type: mean
+
+  # optional future scaling
+  transformer_dim: 128
+
+  use_jet_features: True
+  use_transformer: True
 
 
 training:
   lr: 0.001
   weight_decay: 0.0001
-  epochs: 200
+  epochs: 50
   seed: 42
 
   scheduler:
